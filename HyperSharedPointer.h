@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
-#include <list>
+#include <mutex>
 #include <new>
 #include <thread>
 
@@ -30,7 +30,6 @@ public:
   bool decrement(int slabSlot);
 
 private:
-  std::atomic<uint64_t> usedCpus_;
   std::array<std::atomic<int>, kCounters> counters_;
 };
 
@@ -107,6 +106,8 @@ class alignas(64 * 64) Arena {
 public:
   Arena();
 
+  // Reserves a slot for a new counter. If this fails, then the resulting
+  // Counter will evaluate to false.
   Counter getCounter();
 
   void increment(int cpu, int slabSlot, bool weak);
@@ -125,6 +126,7 @@ public:
   };
 
   std::vector<AtomicWrapper> usedCpusPerSlab_;
+  std::vector<AtomicWrapper> usedCpusPerWeakSlab_;
 
   // One Slab and one weak Slab per Cpu.
   std::vector<Slab> slabs_;
@@ -141,11 +143,15 @@ public:
   ArenaManager(ArenaManager const &) = delete;
   void operator=(ArenaManager const &) = delete;
 
+  Counter getCounter();
+  void notifyNewAvailability(Arena* arena);
+
 private:
   ArenaManager() = default;
-  // This is not a list of all arenas, but just ones that have available
-  // capacity.
-  std::list<Arena> arenas_;
+  std::atomic<Arena *> currentArena_;
+  std::mutex mutex_;            // Protects changing the arenas_ list.
+  std::vector<Arena *> arenas_; // This is not all arenas, but just ones that
+                                // have available capacity.
 };
 
 } // namespace hsp

@@ -4,8 +4,7 @@
 #include "gtest/gtest.h"
 
 TEST(CpuDistributedCounterTest, basic) {
-  hsp::Arena arena;
-  auto counter = arena.getCounter();
+  auto counter = hsp::ArenaManager::getInstance().getCounter();
 
   counter.increment();
   counter.increment();

@@ -18,7 +18,7 @@ int getCpu() {
   return cpu;
 }
 
-Slab::Slab() : usedCpus_(0) {}
+Slab::Slab() {}
 Slab::Slab(const Slab &other) {}
 
 bool Slab::increment(int slabSlot) {
@@ -100,6 +100,7 @@ int Counter::slabSlot() const { return static_cast<int>(reference_ & 63); }
 Arena::Arena() : availableSlotsMask_((1UL << (Slab::kCounters - 1)) - 1) {
   int numCpus = std::thread::hardware_concurrency();
   usedCpusPerSlab_.resize(numCpus);
+  usedCpusPerWeakSlab_.resize(numCpus);
   slabs_.resize(numCpus);
 }
 
@@ -107,12 +108,15 @@ Counter Arena::getCounter() {
   // TODO(lpe): With rseq, this could be faster. Instead of needing to increment
   // the slab counter in all cases, we could instead only increment it if the
   // Cpu has already produced a counter.
-  uint64_t expected = availableSlotsMask_.load(std::memory_order_relaxed);
+  uint64_t available = availableSlotsMask_.load(std::memory_order_relaxed);
   while (true) {
-    // assert(expected);
-    int slabSlot = __builtin_ctz(expected);
-    uint64_t desired = expected & ~(1 << slabSlot);
-    if (availableSlotsMask_.compare_exchange_weak(expected, desired,
+    if (!available) {
+      return Counter();
+    }
+
+    int slabSlot = __builtin_ctz(available);
+    uint64_t desired = available & ~(1 << slabSlot);
+    if (availableSlotsMask_.compare_exchange_weak(available, desired,
                                              std::memory_order_acq_rel,
                                              std::memory_order_relaxed)) {
       return Counter(this, getCpu(), slabSlot);
@@ -166,7 +170,27 @@ bool Arena::decrement(int originalCpu, int slabSlot, bool weak) {
   if (weak) {
     return weakSlabs_[originalCpu].decrement(slabSlot);
   }
-  return slabs_[originalCpu].decrement(slabSlot);
+
+  bool ret = slabs_[originalCpu].decrement(slabSlot);
+  if (ret && 0 == usedCpusPerWeakSlab_[slabSlot].value.load(
+                      std::memory_order_acquire)) {
+    // The slab slot is reusable.
+    uint64_t available = availableSlotsMask_.load(std::memory_order_relaxed);
+    uint64_t newAvailable;
+    do {
+      newAvailable = available | (1UL << slabSlot);
+    } while (!availableSlotsMask_.compare_exchange_weak(
+        available, newAvailable, std::memory_order_acq_rel,
+        std::memory_order_relaxed));
+
+    if (0 == (newAvailable & (newAvailable - 1))) {
+      // The Arena was completely full, but now it has availability, so alert
+      // the ArenaManager.
+      ArenaManager::getInstance().notifyNewAvailability(this);
+    }
+  }
+
+  return ret;
 }
 
 void Arena::markCpu(int cpu, int slabSlot) {
@@ -192,6 +216,57 @@ void Arena::unmarkCpu(int cpu, int slabSlot) {
 /*static*/ ArenaManager& ArenaManager::getInstance() {
   static ArenaManager instance;
   return instance;
+}
+
+Counter ArenaManager::getCounter() {
+  while (true) {
+    auto* currentArena = currentArena_.load(std::memory_order_relaxed);
+    if (!currentArena) {
+      std::scoped_lock l{mutex_};
+      currentArena = currentArena_.load(std::memory_order_acquire);
+      if (currentArena) {
+        continue;
+      }
+
+      currentArena = new Arena();
+      Counter counter = currentArena->getCounter();
+      currentArena_.store(currentArena, std::memory_order_release);
+      arenas_.push_back(currentArena);
+      return counter;
+    }
+
+    Counter counter = currentArena->getCounter();
+    if (counter) {
+      return counter;
+    }
+
+    // The arena is full, so try to remove it from the list.
+    std::scoped_lock l{mutex_};
+    currentArena = currentArena_.load(std::memory_order_acquire);
+    if (!currentArena) {
+      continue;
+    }
+
+    counter = currentArena->getCounter();
+    if (counter) {
+      return counter;
+    }
+
+    auto it = std::find(arenas_.begin(), arenas_.end(), currentArena);
+    arenas_.erase(it);
+
+    if (!arenas_.empty()) {
+      currentArena_.store(arenas_.back(), std::memory_order_release);
+    } else {
+      currentArena_.store(nullptr, std::memory_order_release);
+    }
+  }
+}
+
+void ArenaManager::notifyNewAvailability(Arena *arena) {
+  std::scoped_lock l{mutex_};
+  currentArena_.store(arena, std::memory_order_relaxed);
+  arenas_.push_back(arena);
 }
 
 } // namespace hsp
