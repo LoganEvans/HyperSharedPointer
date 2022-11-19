@@ -4,17 +4,17 @@ load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
 
 cc_library(
-  name = "cpu_distributed_counter",
-  srcs = ["CPUDistributedCounter.cpp"],
-  hdrs = ["CPUDistributedCounter.h"],
+  name = "hyper_shared_pointer",
+  srcs = ["HyperSharedPointer.cpp"],
+  hdrs = ["HyperSharedPointer.h"],
   copts = ["-std=c++20"],
 )
 
 cc_test(
-  name = "cpu_distributed_counter_test",
-  srcs = ["CPUDistributedCounterTest.cpp"],
+  name = "hyper_shared_pointer_test",
+  srcs = ["HyperSharedPointerTest.cpp"],
   deps = [ 
-    ":cpu_distributed_counter",
+    ":hyper_shared_pointer",
     "@gtest//:gtest",
     "@gtest//:gtest_main",
     "@com_google_glog//:glog",
