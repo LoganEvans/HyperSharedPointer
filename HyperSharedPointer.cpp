@@ -36,8 +36,8 @@ bool Slab::tryIncrement(int slabSlot) {
     }
     int desired = counter + 1;
     if (counters_[slabSlot].compare_exchange_weak(counter, desired,
-                                                   std::memory_order_acq_rel,
-                                                   std::memory_order_relaxed)) {
+                                                  std::memory_order_acq_rel,
+                                                  std::memory_order_relaxed)) {
       return true;
     }
   }
@@ -117,8 +117,8 @@ Counter Arena::getCounter() {
     int slabSlot = __builtin_ctz(available);
     uint64_t desired = available & ~(1 << slabSlot);
     if (availableSlotsMask_.compare_exchange_weak(available, desired,
-                                             std::memory_order_acq_rel,
-                                             std::memory_order_relaxed)) {
+                                                  std::memory_order_acq_rel,
+                                                  std::memory_order_relaxed)) {
       return Counter(this, getCpu(), slabSlot);
     }
   }
@@ -213,14 +213,14 @@ void Arena::unmarkCpu(int cpu, int slabSlot) {
       expected, desired, std::memory_order_acq_rel, std::memory_order_relaxed));
 }
 
-/*static*/ ArenaManager& ArenaManager::getInstance() {
+/*static*/ ArenaManager &ArenaManager::getInstance() {
   static ArenaManager instance;
   return instance;
 }
 
 Counter ArenaManager::getCounter() {
   while (true) {
-    auto* currentArena = currentArena_.load(std::memory_order_relaxed);
+    auto *currentArena = currentArena_.load(std::memory_order_relaxed);
     if (!currentArena) {
       std::scoped_lock l{mutex_};
       currentArena = currentArena_.load(std::memory_order_acquire);

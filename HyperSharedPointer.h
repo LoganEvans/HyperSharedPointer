@@ -58,6 +58,16 @@ public:
   // Returns false if the Counter cannot be decremented further.
   bool decrement();
 
+  std::string debugStr() const {
+    char buf[1000];
+    sprintf(buf,
+            "Counter{reference_: 0x%zx, arena: 0x%zx, originalCpu: %d, "
+            "slabSlot: %d}",
+            reinterpret_cast<size_t>(reference_),
+            reinterpret_cast<size_t>(arena()), originalCpu(), slabSlot());
+    return buf;
+  }
+
 private:
   uintptr_t reference_{0};
 
@@ -153,5 +163,92 @@ private:
   std::vector<Arena *> arenas_; // This is not all arenas, but just ones that
                                 // have available capacity.
 };
+
+template <typename T>
+class HyperSharedPointer {
+ public:
+  HyperSharedPointer() : counter_(), ptr_(nullptr) {}
+
+  HyperSharedPointer(T *ptr)
+      : counter_(ArenaManager::getInstance().getCounter()), ptr_(ptr) {}
+
+  HyperSharedPointer(const HyperSharedPointer &other)
+      : counter_(other.counter_), ptr_(other.ptr_) {}
+
+  HyperSharedPointer(HyperSharedPointer &&other)
+      : counter_(std::move(other.counter_)), ptr_(other.ptr_) {
+    other.ptr_ = nullptr;
+  }
+
+  HyperSharedPointer<T> &operator=(const HyperSharedPointer<T> &other) {
+    HyperSharedPointer p{other};
+    swap(p);
+    return *this;
+  }
+
+  void reset(T *ptr) {
+    HyperSharedPointer p{ptr};
+    swap(p);
+    return *this;
+  }
+
+  void swap(HyperSharedPointer &other) {
+    if (!counter_) {
+      if (!other.counter_) {
+        return;
+      }
+      ptr_ = other.ptr_;
+      counter_ = other.counter_;
+      counter_.increment();
+
+      other.ptr_ = nullptr;
+      other.counter_.decrement();
+      other.counter_ = Counter();
+      return;
+    }
+
+    if (!other.counter_) {
+      other.ptr_ = ptr_;
+      other.counter_ = counter_;
+      other.counter_.increment();
+
+      ptr_ = nullptr;
+      counter_.decrement();
+      counter_ = Counter();
+      return;
+    }
+
+    T *tmpPtr{other.ptr_};
+    Counter tmpCounter{other.counter_};
+    tmpCounter.increment();
+    other.counter_.decrement();
+
+    other.ptr_ = tmpPtr;
+    other.counter_ = counter_;
+    other.counter_.increment();
+    counter_.decrement();
+
+    ptr_ = tmpPtr;
+    counter_ = tmpCounter;
+  }
+
+  T *get() const { return ptr_; }
+
+  T &operator*() const { return *ptr_; }
+
+  T *operator->() const { return ptr_; }
+
+  explicit operator bool() const { return ptr_ != nullptr; }
+
+private:
+  Counter counter_;
+  T* ptr_;
+};
+
+template <class T, class U>
+bool operator==(const HyperSharedPointer<T> &lhs,
+                const HyperSharedPointer<U> &rhs) {
+  return lhs.get() == rhs.get();
+}
 
 } // namespace hsp
