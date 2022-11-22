@@ -7,6 +7,9 @@ cc_library(
   name = "hyper_shared_pointer",
   srcs = ["HyperSharedPointer.cpp"],
   hdrs = ["HyperSharedPointer.h"],
+  deps = [
+    "@com_google_glog//:glog",
+  ],
   copts = ["-std=c++20"],
 )
 

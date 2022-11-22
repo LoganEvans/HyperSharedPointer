@@ -12,6 +12,61 @@ namespace hsp {
 //#define CACHELINE_SIZE std::hardware_destructive_interference_size
 #define CACHELINE_SIZE 64
 
+class Debug {
+ public:
+  static int curFuncIndent_;
+  static int curCtorIndent_;
+
+  Debug(const char* fmt, ...) {
+    char buf[1000];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, 1000, fmt, args);
+    va_end(args);
+    msg_ = buf;
+
+    if (isFuncMsg()) {
+      myIndent_ = curFuncIndent_++;
+    } else {
+      myIndent_ = curCtorIndent_++;
+    }
+
+    for (int i = 0; i < myIndent_; i++) {
+      fprintf(stderr, " ");
+    }
+    fprintf(stderr, "> %s\n", msg_.c_str());
+  }
+
+  ~Debug() {
+    for (int i = 0; i < myIndent_; i++) {
+      fprintf(stderr, " ");
+    }
+    fprintf(stderr, "< %s%s\n", msg_.c_str(), note_.c_str());
+
+    if (isFuncMsg()) {
+      curFuncIndent_--;
+    } else {
+      curCtorIndent_--;
+    }
+  }
+
+  void note(const char* fmt, ...) {
+    char buf[1000];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, 1000, fmt, args);
+    va_end(args);
+    note_ = std::string{" // "} + buf;
+  }
+
+ private:
+  int myIndent_;
+  std::string msg_;
+  std::string note_;
+
+  bool isFuncMsg() const { return msg_[msg_.size() - 1] == ')'; }
+};
+
 class Slab {
 public:
   static constexpr size_t kCounters =
@@ -31,6 +86,7 @@ public:
 
 private:
   std::array<std::atomic<int>, kCounters> counters_;
+  //Debug d_{"Slab"};
 };
 
 class Arena;
@@ -51,12 +107,11 @@ public:
 
   ~Counter();
 
+  // Returns true if the Counter cannot be decremented further. A false Counter
+  // will always return false;
+  bool destroy();
+
   operator bool() const;
-
-  void increment();
-
-  // Returns false if the Counter cannot be decremented further.
-  bool decrement();
 
   std::string debugStr() const {
     char buf[1000];
@@ -70,12 +125,19 @@ public:
 
 private:
   uintptr_t reference_{0};
+  Debug d_{"Counter"};
 
   Arena* arena() const;
 
   int originalCpu() const;
 
   int slabSlot() const;
+
+  void increment();
+
+  // Returns true if the Counter cannot be decremented further. A false Counter
+  // will always return false.
+  bool decrement();
 };
 
 class WeakCounter {
@@ -98,10 +160,11 @@ public:
 
 //private:
   uintptr_t reference_;
+  Debug d_{"WeakCounter"};
 
   void increment();
 
-  // Returns false if the WeakCounter cannot be decremented further.
+  // Returns true if the WeakCounter cannot be decremented further.
   bool decrement();
 
   Arena* arena() const;
@@ -127,6 +190,7 @@ public:
 
  private:
   std::atomic<uint64_t> availableSlotsMask_;
+  Debug d_{"Arena"};
 
   struct AtomicWrapper {
     AtomicWrapper() : value(0) {}
@@ -152,6 +216,7 @@ public:
 
   ArenaManager(ArenaManager const &) = delete;
   void operator=(ArenaManager const &) = delete;
+  ~ArenaManager();
 
   Counter getCounter();
   void notifyNewAvailability(Arena* arena);
@@ -162,6 +227,7 @@ private:
   std::mutex mutex_;            // Protects changing the arenas_ list.
   std::vector<Arena *> arenas_; // This is not all arenas, but just ones that
                                 // have available capacity.
+  Debug d_{"ArenaManager"};
 };
 
 template <typename T>
@@ -180,6 +246,13 @@ class HyperSharedPointer {
     other.ptr_ = nullptr;
   }
 
+  ~HyperSharedPointer() {
+    if (counter_.destroy()) {
+      fprintf(stderr, "deleting\n");
+      delete ptr_;
+    }
+  }
+
   HyperSharedPointer<T> &operator=(const HyperSharedPointer<T> &other) {
     HyperSharedPointer p{other};
     swap(p);
@@ -194,39 +267,38 @@ class HyperSharedPointer {
 
   void swap(HyperSharedPointer &other) {
     if (!counter_) {
+      fprintf(stderr, "a\n");
       if (!other.counter_) {
         return;
       }
       ptr_ = other.ptr_;
       counter_ = other.counter_;
-      counter_.increment();
 
       other.ptr_ = nullptr;
-      other.counter_.decrement();
+      other.counter_.destroy();
+      fprintf(stderr, "aa\n");
       other.counter_ = Counter();
+      fprintf(stderr, "b\n");
       return;
     }
 
     if (!other.counter_) {
       other.ptr_ = ptr_;
       other.counter_ = counter_;
-      other.counter_.increment();
 
       ptr_ = nullptr;
-      counter_.decrement();
+      counter_.destroy();
       counter_ = Counter();
       return;
     }
 
     T *tmpPtr{other.ptr_};
     Counter tmpCounter{other.counter_};
-    tmpCounter.increment();
-    other.counter_.decrement();
+    other.counter_.destroy();
 
     other.ptr_ = tmpPtr;
     other.counter_ = counter_;
-    other.counter_.increment();
-    counter_.decrement();
+    counter_.destroy();
 
     ptr_ = tmpPtr;
     counter_ = tmpCounter;
@@ -243,6 +315,7 @@ class HyperSharedPointer {
 private:
   Counter counter_;
   T* ptr_;
+  Debug d_{"HyperSharedPointer"};
 };
 
 template <class T, class U>

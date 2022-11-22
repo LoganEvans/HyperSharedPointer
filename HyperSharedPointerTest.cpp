@@ -4,12 +4,11 @@
 #include "gtest/gtest.h"
 
 TEST(HyperSharedPointerTest, counterBasic) {
-  auto counter = hsp::ArenaManager::getInstance().getCounter();
+  auto counter1 = hsp::ArenaManager::getInstance().getCounter();
+  auto counter2{counter1};
 
-  counter.increment();
-  counter.increment();
-  EXPECT_TRUE(counter.decrement());
-  EXPECT_FALSE(counter.decrement());
+  EXPECT_FALSE(counter1.destroy());
+  EXPECT_TRUE(counter2.destroy());
 }
 
 TEST(HyperSharedPointerTest, defaultCtor) { hsp::HyperSharedPointer<int> p; }

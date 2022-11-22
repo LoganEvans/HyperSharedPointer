@@ -2,33 +2,45 @@
 
 #include <sched.h>
 
+#include <glog/logging.h>
+
 namespace hsp {
+
+int Debug::curFuncIndent_ = 0;
+int Debug::curCtorIndent_ = 40;
 
 int getCpu() {
   thread_local int remainingUses = 0;
-  thread_local unsigned int cpu;
+  thread_local unsigned int cpu = -1;
+  Debug d{"getCpu()"};
 
   if (remainingUses) {
     remainingUses--;
+    d.note("remainingUses: %d, cpu: %u", remainingUses, cpu);
     return cpu;
   }
 
   remainingUses = 31;
-  getcpu(&cpu, nullptr);
+  CHECK(-1 != getcpu(&cpu, nullptr));
+  d.note("remainingUses: %d, cpu: %u", remainingUses, cpu);
   return cpu;
 }
 
-Slab::Slab() {}
-Slab::Slab(const Slab &other) {}
+Slab::Slab() { Debug d{"Slab::Slab()"}; }
+Slab::Slab(const Slab &other) { Debug d{"Slab::Slab(const Slab&)"}; }
 
 bool Slab::increment(int slabSlot) {
+  Debug d{"Slab::increment(%d)", slabSlot};
   if (0 == counters_[slabSlot].fetch_add(1, std::memory_order_relaxed)) {
+    d.note("true");
     return true;
   }
+  d.note("false");
   return false;
 }
 
 bool Slab::tryIncrement(int slabSlot) {
+  Debug d{"Slab::tryIncrement(%d)", slabSlot};
   int counter = counters_[slabSlot].load(std::memory_order_relaxed);
   while (true) {
     if (counter == 0) {
@@ -44,48 +56,68 @@ bool Slab::tryIncrement(int slabSlot) {
 }
 
 bool Slab::decrement(int slabSlot) {
-  if (1 == counters_[slabSlot].load(std::memory_order_relaxed)) {
+  Debug d{"Slab::decrement(%d)", slabSlot};
+  if (1 == counters_[slabSlot].load(std::memory_order_acquire)) {
     // This assumes that the counter will be destroyed now.
-    return false;
+    return true;
   }
 
-  return 1 != counters_[slabSlot].fetch_sub(1, std::memory_order_relaxed);
+  return 1 == counters_[slabSlot].fetch_sub(1, std::memory_order_acq_rel);
 }
 
-Counter::Counter(Arena *arena, int orignalCpu, int slabSlot)
-    : reference_(reinterpret_cast<uintptr_t>(arena) + (orignalCpu << 6) +
-                 slabSlot) {}
+Counter::Counter(Arena *arena, int originalCpu, int slabSlot)
+    : reference_(reinterpret_cast<uintptr_t>(arena) + (originalCpu << 6) +
+                 slabSlot) {
+  Debug d{"Counter::Counter(arena: 0x%lx, cpu: %d, slabSlot: %d)",
+          reinterpret_cast<size_t>(arena), originalCpu, slabSlot};
+  if (arena == nullptr) {
+    reference_ = 0;
+    return;
+  }
+  increment();
+}
 
 Counter::Counter(const Counter &other)
-    : Counter(other.arena(), getCpu(), other.slabSlot()) {}
+    : Counter(other.arena(), getCpu(), other.slabSlot()) {
+  Debug d{"Counter::Counter(const Counter&)"};
+}
 
 Counter::Counter(Counter &&other) : reference_(other.reference_) {
+  Debug d{"Counter::Counter(Counter&&)"};
   other.reference_ = 0;
 }
 
 Counter &Counter::operator=(const Counter &other) {
+  Debug d{"Counter::operator=(const Counter&)"};
   Counter c{other.arena(), getCpu(), other.slabSlot()};
   std::swap(reference_, c.reference_);
   return *this;
 }
 
 Counter &Counter::operator=(Counter &&other) {
+  Debug d{"Counter::operator=(Counter&&)"};
   *this = other;
   other.reference_ = 0;
   return *this;
 }
 
-Counter::~Counter() {}
-
-Counter::operator bool() const { return reference_ != 0; }
-
-void Counter::increment() {
-  arena()->increment(originalCpu(), slabSlot(), /*weak=*/false);
+Counter::~Counter() {
+  Debug d{"Counter::~Counter()"};
+  // TODO(lpe): assert(!(*this));
+  DCHECK(!(*this));
 }
 
-bool Counter::decrement() {
-  return arena()->decrement(originalCpu(), slabSlot(), /*weak=*/false);
+bool Counter::destroy() {
+  Debug d{"Counter::destroy()"};
+  if (!(*this)) {
+    return false;
+  }
+  bool ret = decrement();
+  reference_ = 0;
+  return ret;
 }
+
+Counter::operator bool() const { return arena() != nullptr; }
 
 Arena *Counter::arena() const {
   return reinterpret_cast<Arena *>(reference_ & ~4091);
@@ -97,7 +129,18 @@ int Counter::originalCpu() const {
 
 int Counter::slabSlot() const { return static_cast<int>(reference_ & 63); }
 
+void Counter::increment() {
+  Debug d{"Counter::increment()"};
+  arena()->increment(originalCpu(), slabSlot(), /*weak=*/false);
+}
+
+bool Counter::decrement() {
+  Debug d{"Counter::decrement()"};
+  return arena()->decrement(originalCpu(), slabSlot(), /*weak=*/false);
+}
+
 Arena::Arena() : availableSlotsMask_((1UL << (Slab::kCounters - 1)) - 1) {
+  Debug d{"Arena::Arena()"};
   int numCpus = std::thread::hardware_concurrency();
   usedCpusPerSlab_.resize(numCpus);
   usedCpusPerWeakSlab_.resize(numCpus);
@@ -105,6 +148,7 @@ Arena::Arena() : availableSlotsMask_((1UL << (Slab::kCounters - 1)) - 1) {
 }
 
 Counter Arena::getCounter() {
+  Debug d{"Arena::getCounter()"};
   // TODO(lpe): With rseq, this could be faster. Instead of needing to increment
   // the slab counter in all cases, we could instead only increment it if the
   // Cpu has already produced a counter.
@@ -115,16 +159,18 @@ Counter Arena::getCounter() {
     }
 
     int slabSlot = __builtin_ctz(available);
-    uint64_t desired = available & ~(1 << slabSlot);
+    uint64_t desired = available & ~(1UL << slabSlot);
     if (availableSlotsMask_.compare_exchange_weak(available, desired,
                                                   std::memory_order_acq_rel,
                                                   std::memory_order_relaxed)) {
+      d.note("slabSlot: %d", slabSlot);
       return Counter(this, getCpu(), slabSlot);
     }
   }
 }
 
 void Arena::increment(int cpu, int slabSlot, bool weak) {
+  Debug d{"Arena::increment(cpu: %d, slabSlot: %d)", cpu, slabSlot};
   if (weak) {
     weakSlabs_[cpu].increment(slabSlot);
   }
@@ -132,6 +178,7 @@ void Arena::increment(int cpu, int slabSlot, bool weak) {
 }
 
 bool Arena::tryIncrement(int cpu, int slabSlot) {
+  Debug d{"Arena::tryIncrement(cpu: %d, slabSlot: %d)", cpu, slabSlot};
   if (slabs_[cpu].tryIncrement(slabSlot)) {
     return true;
   }
@@ -167,6 +214,8 @@ bool Arena::tryIncrement(int cpu, int slabSlot) {
 }
 
 bool Arena::decrement(int originalCpu, int slabSlot, bool weak) {
+  Debug d{"Arena::decrement(originalCpu: %d, slabSlot: %d, weak: %d)",
+          originalCpu, slabSlot, weak};
   if (weak) {
     return weakSlabs_[originalCpu].decrement(slabSlot);
   }
@@ -176,12 +225,15 @@ bool Arena::decrement(int originalCpu, int slabSlot, bool weak) {
                       std::memory_order_acquire)) {
     // The slab slot is reusable.
     uint64_t available = availableSlotsMask_.load(std::memory_order_relaxed);
+    fprintf(stderr, "before: %lx\n", available);
     uint64_t newAvailable;
     do {
       newAvailable = available | (1UL << slabSlot);
     } while (!availableSlotsMask_.compare_exchange_weak(
         available, newAvailable, std::memory_order_acq_rel,
         std::memory_order_relaxed));
+    available = availableSlotsMask_.load(std::memory_order_relaxed);
+    fprintf(stderr, "after : %lx\n", available);
 
     if (0 == (newAvailable & (newAvailable - 1))) {
       // The Arena was completely full, but now it has availability, so alert
@@ -194,6 +246,7 @@ bool Arena::decrement(int originalCpu, int slabSlot, bool weak) {
 }
 
 void Arena::markCpu(int cpu, int slabSlot) {
+  Debug d{"Arena::markCpu(%d, %d)", cpu, slabSlot};
   uint64_t expected =
       usedCpusPerSlab_[slabSlot].value.load(std::memory_order_relaxed);
   uint64_t desired;
@@ -204,6 +257,7 @@ void Arena::markCpu(int cpu, int slabSlot) {
 }
 
 void Arena::unmarkCpu(int cpu, int slabSlot) {
+  Debug d{"Arena::unmarkCpu(%d, %d)", cpu, slabSlot};
   uint64_t expected =
       usedCpusPerSlab_[slabSlot].value.load(std::memory_order_relaxed);
   uint64_t desired;
@@ -213,12 +267,21 @@ void Arena::unmarkCpu(int cpu, int slabSlot) {
       expected, desired, std::memory_order_acq_rel, std::memory_order_relaxed));
 }
 
+ArenaManager::~ArenaManager() {
+  Debug d{"~ArenaManager()"};
+  for (auto* arena : arenas_) {
+    delete arena;
+  }
+}
+
 /*static*/ ArenaManager &ArenaManager::getInstance() {
+  Debug d{"ArenaManager::getInstance()"};
   static ArenaManager instance;
   return instance;
 }
 
 Counter ArenaManager::getCounter() {
+  Debug d{"ArenaManager::getCounter()"};
   while (true) {
     auto *currentArena = currentArena_.load(std::memory_order_relaxed);
     if (!currentArena) {
@@ -264,6 +327,7 @@ Counter ArenaManager::getCounter() {
 }
 
 void ArenaManager::notifyNewAvailability(Arena *arena) {
+  Debug d{"ArenaManager::notifyNewAvailability()"};
   std::scoped_lock l{mutex_};
   currentArena_.store(arena, std::memory_order_relaxed);
   arenas_.push_back(arena);
