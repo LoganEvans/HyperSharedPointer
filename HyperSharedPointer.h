@@ -99,7 +99,6 @@ public:
 
 private:
   std::array<std::atomic<int>, kCounters> counters_;
-  //Debug d_{"Slab"};
 };
 
 class Arena;
@@ -138,7 +137,6 @@ public:
 
 private:
   uintptr_t reference_{0};
-  Debug d_{"Counter"};
 
   Arena* arena() const;
 
@@ -173,7 +171,6 @@ public:
 
 //private:
   uintptr_t reference_;
-  Debug d_{"WeakCounter"};
 
   void increment();
 
@@ -203,7 +200,6 @@ public:
 
  private:
   std::atomic<uint64_t> availableSlotsMask_;
-  Debug d_{"Arena"};
 
   struct AtomicWrapper {
     AtomicWrapper() : value(0) {}
@@ -240,7 +236,6 @@ private:
   std::mutex mutex_;            // Protects changing the arenas_ list.
   std::vector<Arena *> arenas_; // This is not all arenas, but just ones that
                                 // have available capacity.
-  Debug d_{"ArenaManager"};
 };
 
 template <typename T>
@@ -260,9 +255,7 @@ class HyperSharedPointer {
   }
 
   ~HyperSharedPointer() {
-    Debug d{"~HyperSharedPointer()"};
     if (counter_.destroy()) {
-      fprintf(stderr, "deleting: %zx\n", reinterpret_cast<size_t>(ptr_));
       delete ptr_;
     }
   }
@@ -284,9 +277,7 @@ class HyperSharedPointer {
   }
 
   void swap(HyperSharedPointer &other) {
-    Debug d{"HyperSharedPointer::swap()"};
     if (!counter_) {
-      fprintf(stderr, "a\n");
       if (!other.counter_) {
         return;
       }
@@ -295,9 +286,7 @@ class HyperSharedPointer {
 
       other.ptr_ = nullptr;
       other.counter_.destroy();
-      fprintf(stderr, "aa\n");
       other.counter_ = Counter();
-      fprintf(stderr, "b\n");
       return;
     }
 
@@ -335,7 +324,6 @@ class HyperSharedPointer {
 private:
   Counter counter_;
   T* ptr_;
-  Debug d_{"HyperSharedPointer"};
 };
 
 template <class T, class U>
