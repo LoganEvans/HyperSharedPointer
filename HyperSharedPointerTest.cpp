@@ -37,3 +37,31 @@ TEST(HyperSharedPointerTest, assignment) {
     EXPECT_EQ(p1.get(), p2.get());
   }
 }
+
+TEST(HyperSharedPointerTest, reset) {
+  hsp::HyperSharedPointer<int> p{new int};
+  EXPECT_TRUE(p);
+  p.reset();
+  EXPECT_FALSE(p);
+}
+
+TEST(HyperSharedPointerTest, resetValue) {
+  hsp::HyperSharedPointer<int> p{new int};
+  EXPECT_TRUE(p);
+  p.reset(new int);
+  EXPECT_TRUE(p);
+}
+
+TEST(HyperSharedPointerTest, swap) {
+  hsp::HyperSharedPointer<int> p1{new int};
+  *p1 = 1;
+  hsp::HyperSharedPointer<int> p2{new int};
+  *p2 = 2;
+
+  EXPECT_EQ(*p1, 1);
+  EXPECT_EQ(*p2, 2);
+
+  p1.swap(p2);
+  EXPECT_EQ(*p1, 2);
+  EXPECT_EQ(*p2, 1);
+}

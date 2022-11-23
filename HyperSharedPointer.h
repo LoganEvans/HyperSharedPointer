@@ -59,6 +59,19 @@ class Debug {
     note_ = std::string{" // "} + buf;
   }
 
+  void print(const char* fmt, ...) {
+    char buf[1000];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, 1000, fmt, args);
+    va_end(args);
+
+    for (int i = 0; i < myIndent_; i++) {
+      fprintf(stderr, " ");
+    }
+    fprintf(stderr, "- %s\n", buf);
+  }
+
  private:
   int myIndent_;
   std::string msg_;
@@ -247,8 +260,9 @@ class HyperSharedPointer {
   }
 
   ~HyperSharedPointer() {
+    Debug d{"~HyperSharedPointer()"};
     if (counter_.destroy()) {
-      fprintf(stderr, "deleting\n");
+      fprintf(stderr, "deleting: %zx\n", reinterpret_cast<size_t>(ptr_));
       delete ptr_;
     }
   }
@@ -259,13 +273,18 @@ class HyperSharedPointer {
     return *this;
   }
 
-  void reset(T *ptr) {
-    HyperSharedPointer p{ptr};
-    swap(p);
-    return *this;
+  void reset(T *ptr = nullptr) {
+    if (ptr) {
+      HyperSharedPointer p{ptr};
+      swap(p);
+    } else {
+      HyperSharedPointer p;
+      swap(p);
+    }
   }
 
   void swap(HyperSharedPointer &other) {
+    Debug d{"HyperSharedPointer::swap()"};
     if (!counter_) {
       fprintf(stderr, "a\n");
       if (!other.counter_) {
@@ -296,12 +315,13 @@ class HyperSharedPointer {
     Counter tmpCounter{other.counter_};
     other.counter_.destroy();
 
-    other.ptr_ = tmpPtr;
+    other.ptr_ = ptr_;
     other.counter_ = counter_;
     counter_.destroy();
 
     ptr_ = tmpPtr;
     counter_ = tmpCounter;
+    tmpCounter.destroy();
   }
 
   T *get() const { return ptr_; }

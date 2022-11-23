@@ -30,8 +30,9 @@ Slab::Slab() { Debug d{"Slab::Slab()"}; }
 Slab::Slab(const Slab &other) { Debug d{"Slab::Slab(const Slab&)"}; }
 
 bool Slab::increment(int slabSlot) {
-  Debug d{"Slab::increment(%d)", slabSlot};
-  if (0 == counters_[slabSlot].fetch_add(1, std::memory_order_relaxed)) {
+  Debug d{"Slab::increment(%d) (counter: %d)", slabSlot,
+          counters_[slabSlot].load()};
+  if (!counters_[slabSlot].fetch_add(1, std::memory_order_relaxed)) {
     d.note("true");
     return true;
   }
@@ -56,12 +57,8 @@ bool Slab::tryIncrement(int slabSlot) {
 }
 
 bool Slab::decrement(int slabSlot) {
-  Debug d{"Slab::decrement(%d)", slabSlot};
-  if (1 == counters_[slabSlot].load(std::memory_order_acquire)) {
-    // This assumes that the counter will be destroyed now.
-    return true;
-  }
-
+  Debug d{"Slab::decrement(%d) counterBefore: (%d)", slabSlot,
+          counters_[slabSlot].load(std::memory_order_acquire)};
   return 1 == counters_[slabSlot].fetch_sub(1, std::memory_order_acq_rel);
 }
 
@@ -103,6 +100,9 @@ Counter &Counter::operator=(Counter &&other) {
 
 Counter::~Counter() {
   Debug d{"Counter::~Counter()"};
+  if (bool(*this)) {
+    d.note("slabSlot: %d", slabSlot());
+  }
   // TODO(lpe): assert(!(*this));
   DCHECK(!(*this));
 }
@@ -153,8 +153,10 @@ Counter Arena::getCounter() {
   // the slab counter in all cases, we could instead only increment it if the
   // Cpu has already produced a counter.
   uint64_t available = availableSlotsMask_.load(std::memory_order_relaxed);
+  fprintf(stderr, "available: %lx\n", available);
   while (true) {
     if (!available) {
+      d.note("no slots available");
       return Counter();
     }
 
@@ -220,29 +222,40 @@ bool Arena::decrement(int originalCpu, int slabSlot, bool weak) {
     return weakSlabs_[originalCpu].decrement(slabSlot);
   }
 
-  bool ret = slabs_[originalCpu].decrement(slabSlot);
-  if (ret && 0 == usedCpusPerWeakSlab_[slabSlot].value.load(
-                      std::memory_order_acquire)) {
-    // The slab slot is reusable.
-    uint64_t available = availableSlotsMask_.load(std::memory_order_relaxed);
-    fprintf(stderr, "before: %lx\n", available);
-    uint64_t newAvailable;
+  if (slabs_[originalCpu].decrement(slabSlot)) {
+    uint64_t expected = 1UL << originalCpu;
+    uint64_t desired;
     do {
-      newAvailable = available | (1UL << slabSlot);
-    } while (!availableSlotsMask_.compare_exchange_weak(
-        available, newAvailable, std::memory_order_acq_rel,
+      desired = expected & ~(1ULL << originalCpu);
+    } while (!usedCpusPerSlab_[slabSlot].value.compare_exchange_weak(
+        expected, desired, std::memory_order_acq_rel,
         std::memory_order_relaxed));
-    available = availableSlotsMask_.load(std::memory_order_relaxed);
-    fprintf(stderr, "after : %lx\n", available);
 
-    if (0 == (newAvailable & (newAvailable - 1))) {
-      // The Arena was completely full, but now it has availability, so alert
-      // the ArenaManager.
-      ArenaManager::getInstance().notifyNewAvailability(this);
+    if (!desired &&
+        !usedCpusPerWeakSlab_[slabSlot].value.load(std::memory_order_acquire)) {
+      // The slab slot is reusable.
+      uint64_t available = availableSlotsMask_.load(std::memory_order_relaxed);
+      fprintf(stderr, "before: %lx\n", available);
+      uint64_t newAvailable;
+      do {
+        newAvailable = available | (1UL << slabSlot);
+      } while (!availableSlotsMask_.compare_exchange_weak(
+          available, newAvailable, std::memory_order_acq_rel,
+          std::memory_order_relaxed));
+      available = availableSlotsMask_.load(std::memory_order_relaxed);
+      fprintf(stderr, "after : %lx\n", available);
+
+      if (0 == (newAvailable & (newAvailable - 1))) {
+        // The Arena was completely full, but now it has availability, so alert
+        // the ArenaManager.
+        ArenaManager::getInstance().notifyNewAvailability(this);
+      }
     }
+
+    return true;
   }
 
-  return ret;
+  return false;
 }
 
 void Arena::markCpu(int cpu, int slabSlot) {
