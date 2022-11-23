@@ -24,3 +24,13 @@ cc_test(
   ],
   copts = ["-std=c++20"],
 )
+
+cc_binary(
+  name = "hyper_shared_pointer_benchmark",
+  srcs = ["HyperSharedPointerBenchmark.cpp"],
+  deps = [
+    ":hyper_shared_pointer",
+    "@benchmark//:benchmark",
+  ],
+  copts = ["-std=c++20"],
+)

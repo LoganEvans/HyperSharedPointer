@@ -17,3 +17,9 @@ git_repository(
     remote = "https://github.com/gflags/gflags.git",
     branch = "master",
 )
+
+git_repository(
+    name = "benchmark",
+    remote = "https://github.com/google/benchmark",
+    branch = "main",
+)
