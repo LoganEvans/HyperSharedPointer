@@ -216,7 +216,8 @@ public:
   std::vector<Slab> weakSlabs_;
 
   void markCpu(int cpu, int slabSlot);
-  void unmarkCpu(int cpu, int slabSlot);
+  uint64_t unmarkCpu(int cpu, int slabSlot);
+  uint64_t unmarkSlabSlot(int slabSlot);
 };
 
 class ArenaManager {

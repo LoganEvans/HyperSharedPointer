@@ -24,6 +24,7 @@ int getCpu() {
 }
 
 Slab::Slab() {}
+
 Slab::Slab(const Slab &other) {}
 
 bool Slab::increment(int slabSlot) {
@@ -98,7 +99,7 @@ bool Counter::destroy() {
 Counter::operator bool() const { return arena() != nullptr; }
 
 Arena *Counter::arena() const {
-  return reinterpret_cast<Arena *>(reference_ & ~4091);
+  return reinterpret_cast<Arena *>(reference_ & ~4095);
 }
 
 int Counter::originalCpu() const {
@@ -190,27 +191,12 @@ bool Arena::decrement(int originalCpu, int slabSlot, bool weak) {
   }
 
   if (slabs_[originalCpu].decrement(slabSlot)) {
-    uint64_t expected = 1UL << originalCpu;
-    uint64_t desired;
-    do {
-      desired = expected & ~(1ULL << originalCpu);
-    } while (!usedCpusPerSlab_[slabSlot].value.compare_exchange_weak(
-        expected, desired, std::memory_order_acq_rel,
-        std::memory_order_relaxed));
-
-    if (!desired &&
+    uint64_t usedCpus = unmarkCpu(originalCpu, slabSlot);
+    if (!usedCpus &&
         !usedCpusPerWeakSlab_[slabSlot].value.load(std::memory_order_acquire)) {
       // The slab slot is reusable.
-      uint64_t available = availableSlotsMask_.load(std::memory_order_relaxed);
-      uint64_t newAvailable;
-      do {
-        newAvailable = available | (1UL << slabSlot);
-      } while (!availableSlotsMask_.compare_exchange_weak(
-          available, newAvailable, std::memory_order_acq_rel,
-          std::memory_order_relaxed));
-      available = availableSlotsMask_.load(std::memory_order_relaxed);
-
-      if (0 == (newAvailable & (newAvailable - 1))) {
+      uint64_t availableSlabSlots = unmarkSlabSlot(slabSlot);
+      if (0 == (availableSlabSlots & (availableSlabSlots - 1))) {
         // The Arena was completely full, but now it has availability, so alert
         // the ArenaManager.
         ArenaManager::getInstance().notifyNewAvailability(this);
@@ -233,7 +219,7 @@ void Arena::markCpu(int cpu, int slabSlot) {
       expected, desired, std::memory_order_acq_rel, std::memory_order_relaxed));
 }
 
-void Arena::unmarkCpu(int cpu, int slabSlot) {
+uint64_t Arena::unmarkCpu(int cpu, int slabSlot) {
   uint64_t expected =
       usedCpusPerSlab_[slabSlot].value.load(std::memory_order_relaxed);
   uint64_t desired;
@@ -241,6 +227,18 @@ void Arena::unmarkCpu(int cpu, int slabSlot) {
     desired = expected & (~(1UL << cpu));
   } while (!usedCpusPerSlab_[slabSlot].value.compare_exchange_weak(
       expected, desired, std::memory_order_acq_rel, std::memory_order_relaxed));
+  return desired;
+}
+
+uint64_t Arena::unmarkSlabSlot(int slabSlot) {
+  uint64_t available = availableSlotsMask_.load(std::memory_order_relaxed);
+  uint64_t newAvailable;
+  do {
+    newAvailable = available | (1UL << slabSlot);
+  } while (!availableSlotsMask_.compare_exchange_weak(
+      available, newAvailable, std::memory_order_acq_rel,
+      std::memory_order_relaxed));
+  return newAvailable;
 }
 
 ArenaManager::~ArenaManager() {
