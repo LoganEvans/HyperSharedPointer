@@ -36,7 +36,7 @@ static void BM_SharingHyperSharedPointer(benchmark::State &state) {
   }
 }
 BENCHMARK(BM_SharingHyperSharedPointer)->Threads(1);
-BENCHMARK(BM_SharingHyperSharedPointer)->Threads(10);
+BENCHMARK(BM_SharingHyperSharedPointer)->Threads(9);
 
 static void BM_SharingSharedPointer(benchmark::State &state) {
   static std::shared_ptr<int> staticPtr{new int};
@@ -50,6 +50,6 @@ static void BM_SharingSharedPointer(benchmark::State &state) {
   }
 }
 BENCHMARK(BM_SharingSharedPointer)->Threads(1);
-BENCHMARK(BM_SharingSharedPointer)->Threads(10);
+BENCHMARK(BM_SharingSharedPointer)->Threads(9);
 
 BENCHMARK_MAIN();

@@ -136,6 +136,13 @@ public:
   }
 
 private:
+  static constexpr uint64_t kFieldBits = 6;
+  static constexpr uint64_t kFieldMask = (1UL << kFieldBits) - 1;
+  // This comes from using alignas(4096) for Arena.
+  static constexpr uint64_t kArenaMask = ~((1UL << (2 * kFieldBits)) - 1);
+  static constexpr uint64_t kCpuOffset = 0;
+  static constexpr uint64_t kSlabSlotOffset = kFieldBits;
+
   uintptr_t reference_{0};
 
   Arena* arena() const;
@@ -282,35 +289,26 @@ class HyperSharedPointer {
         return;
       }
       ptr_ = other.ptr_;
-      counter_ = other.counter_;
-
       other.ptr_ = nullptr;
-      other.counter_.destroy();
-      other.counter_ = Counter();
+      counter_ = std::move(other.counter_);
       return;
     }
 
     if (!other.counter_) {
       other.ptr_ = ptr_;
-      other.counter_ = counter_;
-
       ptr_ = nullptr;
-      counter_.destroy();
-      counter_ = Counter();
+      other.counter_ = std::move(counter_);
       return;
     }
 
     T *tmpPtr{other.ptr_};
-    Counter tmpCounter{other.counter_};
-    other.counter_.destroy();
+    Counter tmpCounter{std::move(other.counter_)};
 
     other.ptr_ = ptr_;
-    other.counter_ = counter_;
-    counter_.destroy();
+    other.counter_ = std::move(counter_);
 
     ptr_ = tmpPtr;
-    counter_ = tmpCounter;
-    tmpCounter.destroy();
+    counter_ = std::move(tmpCounter);
   }
 
   T *get() const { return ptr_; }

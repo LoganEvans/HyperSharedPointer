@@ -53,10 +53,10 @@ bool Slab::decrement(int slabSlot) {
   return 1 == counters_[slabSlot].fetch_sub(1, std::memory_order_acq_rel);
 }
 
-Counter::Counter(Arena *arena, int originalCpu, int slabSlot)
-    : reference_(reinterpret_cast<uintptr_t>(arena) + (originalCpu << 6) +
-                 slabSlot) {
-  if (arena == nullptr) {
+Counter::Counter(Arena *arena_, int originalCpu_, int slabSlot_)
+    : reference_(reinterpret_cast<uintptr_t>(arena_) +
+                 (originalCpu_ << kCpuOffset) + (slabSlot_ << kSlabSlotOffset)) {
+  if (arena_ == nullptr) {
     reference_ = 0;
     return;
   }
@@ -64,7 +64,9 @@ Counter::Counter(Arena *arena, int originalCpu, int slabSlot)
 }
 
 Counter::Counter(const Counter &other)
-    : Counter(other.arena(), getCpu(), other.slabSlot()) {
+    : reference_((other.reference_ & ~(kFieldMask << kCpuOffset)) +
+                 (getCpu() << kCpuOffset)) {
+  increment();
 }
 
 Counter::Counter(Counter &&other) : reference_(other.reference_) {
@@ -72,7 +74,7 @@ Counter::Counter(Counter &&other) : reference_(other.reference_) {
 }
 
 Counter &Counter::operator=(const Counter &other) {
-  Counter c{other.arena(), getCpu(), other.slabSlot()};
+  Counter c{other};
   std::swap(reference_, c.reference_);
   return *this;
 }
@@ -96,17 +98,19 @@ bool Counter::destroy() {
   return ret;
 }
 
-Counter::operator bool() const { return arena() != nullptr; }
+Counter::operator bool() const { return reference_ != 0; }
 
 Arena *Counter::arena() const {
-  return reinterpret_cast<Arena *>(reference_ & ~4095);
+  return reinterpret_cast<Arena *>(reference_ & kArenaMask);
 }
 
 int Counter::originalCpu() const {
-  return static_cast<int>((reference_ >> 6) & 63);
+  return static_cast<int>((reference_ >> kCpuOffset) & kFieldMask);
 }
 
-int Counter::slabSlot() const { return static_cast<int>(reference_ & 63); }
+int Counter::slabSlot() const {
+  return static_cast<int>((reference_ >> kSlabSlotOffset) & kFieldMask);
+}
 
 void Counter::increment() {
   arena()->increment(originalCpu(), slabSlot(), /*weak=*/false);
