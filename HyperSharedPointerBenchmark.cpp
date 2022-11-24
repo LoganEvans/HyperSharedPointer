@@ -32,13 +32,7 @@ static void BM_SharingHyperSharedPointer(benchmark::State &state) {
   std::uniform_int_distribution<> unif(0, buf.size() - 1);
 
   for (auto _ : state) {
-    int idx = unif(gen);
-    const auto& p = &buf[idx];
-    if (!p) {
-      buf[idx] = staticPtr;
-    } else {
-      buf[idx].reset();
-    }
+    buf[unif(gen)] = staticPtr;
   }
 }
 BENCHMARK(BM_SharingHyperSharedPointer)->Threads(1);
@@ -52,13 +46,7 @@ static void BM_SharingSharedPointer(benchmark::State &state) {
   std::uniform_int_distribution<> unif(0, buf.size() - 1);
 
   for (auto _ : state) {
-    int idx = unif(gen);
-    const auto& p = &buf[idx];
-    if (!p) {
-      buf[idx] = staticPtr;
-    } else {
-      buf[idx].reset();
-    }
+    buf[unif(gen)] = staticPtr;
   }
 }
 BENCHMARK(BM_SharingSharedPointer)->Threads(1);
