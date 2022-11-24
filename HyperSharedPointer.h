@@ -215,8 +215,7 @@ public:
   std::vector<Slab> slabs_;
   std::vector<Slab> weakSlabs_;
 
-  void markCpu(int cpu, int slabSlot);
-  uint64_t unmarkCpu(int cpu, int slabSlot);
+  void markCpu(int cpu, int slabSlot); uint64_t unmarkCpu(int cpu, int slabSlot);
   uint64_t unmarkSlabSlot(int slabSlot);
 };
 

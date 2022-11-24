@@ -147,7 +147,9 @@ void Arena::increment(int cpu, int slabSlot, bool weak) {
   if (weak) {
     weakSlabs_[cpu].increment(slabSlot);
   }
-  slabs_[cpu].increment(slabSlot);
+  if (slabs_[cpu].increment(slabSlot)) {
+    markCpu(cpu, slabSlot);
+  }
 }
 
 bool Arena::tryIncrement(int cpu, int slabSlot) {
@@ -192,8 +194,7 @@ bool Arena::decrement(int originalCpu, int slabSlot, bool weak) {
 
   if (slabs_[originalCpu].decrement(slabSlot)) {
     uint64_t usedCpus = unmarkCpu(originalCpu, slabSlot);
-    if (!usedCpus &&
-        !usedCpusPerWeakSlab_[slabSlot].value.load(std::memory_order_acquire)) {
+    if (!usedCpus) {
       // The slab slot is reusable.
       uint64_t availableSlabSlots = unmarkSlabSlot(slabSlot);
       if (0 == (availableSlabSlots & (availableSlabSlots - 1))) {
@@ -201,9 +202,8 @@ bool Arena::decrement(int originalCpu, int slabSlot, bool weak) {
         // the ArenaManager.
         ArenaManager::getInstance().notifyNewAvailability(this);
       }
+      return true;
     }
-
-    return true;
   }
 
   return false;
@@ -212,22 +212,22 @@ bool Arena::decrement(int originalCpu, int slabSlot, bool weak) {
 void Arena::markCpu(int cpu, int slabSlot) {
   uint64_t expected =
       usedCpusPerSlab_[slabSlot].value.load(std::memory_order_relaxed);
-  uint64_t desired;
+  uint64_t usedCpus;
   do {
-    desired = expected | (1UL << cpu);
+    usedCpus = expected | (1UL << cpu);
   } while (!usedCpusPerSlab_[slabSlot].value.compare_exchange_weak(
-      expected, desired, std::memory_order_acq_rel, std::memory_order_relaxed));
+      expected, usedCpus, std::memory_order_acq_rel, std::memory_order_relaxed));
 }
 
 uint64_t Arena::unmarkCpu(int cpu, int slabSlot) {
   uint64_t expected =
       usedCpusPerSlab_[slabSlot].value.load(std::memory_order_relaxed);
-  uint64_t desired;
+  uint64_t usedCpus;
   do {
-    desired = expected & (~(1UL << cpu));
+    usedCpus = expected & (~(1UL << cpu));
   } while (!usedCpusPerSlab_[slabSlot].value.compare_exchange_weak(
-      expected, desired, std::memory_order_acq_rel, std::memory_order_relaxed));
-  return desired;
+      expected, usedCpus, std::memory_order_acq_rel, std::memory_order_relaxed));
+  return usedCpus;
 }
 
 uint64_t Arena::unmarkSlabSlot(int slabSlot) {
