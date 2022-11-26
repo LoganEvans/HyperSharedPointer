@@ -3,19 +3,22 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <list>
 #include <mutex>
 #include <new>
 #include <thread>
 
 namespace hsp {
 
-//#define CACHELINE_SIZE std::hardware_destructive_interference_size
-#define CACHELINE_SIZE 64
-
 class Debug {
  public:
   static int curFuncIndent_;
   static int curCtorIndent_;
+  static bool enabled_;
+
+  static void enable() { enabled_ = true; }
+
+  static void disable() { enabled_ = false; }
 
   Debug(const char* fmt, ...) {
     char buf[1000];
@@ -31,17 +34,21 @@ class Debug {
       myIndent_ = curCtorIndent_++;
     }
 
-    for (int i = 0; i < myIndent_; i++) {
-      fprintf(stderr, " ");
-    }
+    if (enabled_) {
+      for (int i = 0; i < myIndent_; i++) {
+        fprintf(stderr, " ");
+      }
     fprintf(stderr, "> %s\n", msg_.c_str());
+    }
   }
 
   ~Debug() {
-    for (int i = 0; i < myIndent_; i++) {
-      fprintf(stderr, " ");
-    }
+    if (enabled_) {
+      for (int i = 0; i < myIndent_; i++) {
+        fprintf(stderr, " ");
+      }
     fprintf(stderr, "< %s%s\n", msg_.c_str(), note_.c_str());
+    }
 
     if (isFuncMsg()) {
       curFuncIndent_--;
@@ -54,7 +61,9 @@ class Debug {
     char buf[1000];
     va_list args;
     va_start(args, fmt);
-    vsnprintf(buf, 1000, fmt, args);
+    if (enabled_) {
+      vsnprintf(buf, 1000, fmt, args);
+    }
     va_end(args);
     note_ = std::string{" // "} + buf;
   }
@@ -63,13 +72,17 @@ class Debug {
     char buf[1000];
     va_list args;
     va_start(args, fmt);
-    vsnprintf(buf, 1000, fmt, args);
+    if (enabled_) {
+      vsnprintf(buf, 1000, fmt, args);
+    }
     va_end(args);
 
-    for (int i = 0; i < myIndent_; i++) {
-      fprintf(stderr, " ");
+    if (enabled_) {
+      for (int i = 0; i < myIndent_; i++) {
+        fprintf(stderr, " ");
+      }
+      fprintf(stderr, "- %s\n", buf);
     }
-    fprintf(stderr, "- %s\n", buf);
   }
 
  private:
@@ -80,25 +93,22 @@ class Debug {
   bool isFuncMsg() const { return msg_[msg_.size() - 1] == ')'; }
 };
 
-class Slab {
+int getCpu();
+
+// TODO(lpe): Instead of 128, this should use
+// std::hardware_destructive_interferrence_size.
+class alignas(128) Slab {
 public:
-  static constexpr size_t kCounters =
-      std::max(64UL, CACHELINE_SIZE / sizeof(int));
-
-  Slab();
-  Slab(const Slab& other);
-
   // Returns true iff this is the first increment.
-  bool increment(int slabSlot);
-
-  // Returns true iff this was not the first increment.
-  bool tryIncrement(int slabSlot);
+  bool increment();
 
   // Returns true iff this is the last decrement.
-  bool decrement(int slabSlot);
+  bool decrement();
+
+  size_t use_count() const;
 
 private:
-  std::array<std::atomic<int>, kCounters> counters_;
+  std::atomic<int> counter_{0};
 };
 
 class Arena;
@@ -107,7 +117,7 @@ class Counter {
 public:
   Counter() = default;
 
-  Counter(Arena *arena, int originalCpu, int slabSlot);
+  Counter(Arena *arena, int originalCpu);
 
   Counter(const Counter& other);
 
@@ -125,31 +135,20 @@ public:
 
   operator bool() const;
 
-  std::string debugStr() const {
-    char buf[1000];
-    sprintf(buf,
-            "Counter{reference_: 0x%zx, arena: 0x%zx, originalCpu: %d, "
-            "slabSlot: %d}",
-            reinterpret_cast<size_t>(reference_),
-            reinterpret_cast<size_t>(arena()), originalCpu(), slabSlot());
-    return buf;
-  }
+  size_t use_count() const;
 
 private:
-  static constexpr uint64_t kFieldBits = 6;
+  static constexpr uint64_t kFieldBits = 7;  // From alignas(128) for Arena.
   static constexpr uint64_t kFieldMask = (1UL << kFieldBits) - 1;
   // This comes from using alignas(4096) for Arena.
-  static constexpr uint64_t kArenaMask = ~((1UL << (2 * kFieldBits)) - 1);
+  static constexpr uint64_t kArenaMask = ~kFieldMask;
   static constexpr uint64_t kCpuOffset = 0;
-  static constexpr uint64_t kSlabSlotOffset = kFieldBits;
 
   uintptr_t reference_{0};
 
   Arena* arena() const;
 
   int originalCpu() const;
-
-  int slabSlot() const;
 
   void increment();
 
@@ -162,7 +161,7 @@ class WeakCounter {
 public:
   WeakCounter() = delete;
 
-  WeakCounter(Arena *arena, int originalCpu, int slabSlot);
+  WeakCounter(Arena *arena, int originalCpu);
 
   WeakCounter(const WeakCounter& other);
 
@@ -176,7 +175,7 @@ public:
 
   Counter lock() const;
 
-//private:
+private:
   uintptr_t reference_;
 
   void increment();
@@ -187,62 +186,42 @@ public:
   Arena* arena() const;
 
   int originalCpu() const;
-
-  int slabSlot() const;
 };
 
 // Contains space for up to 64 counters.
-class alignas(64 * 64) Arena {
+class alignas(128) Arena {
 public:
-  Arena();
+  static Arena* create();
+  static void destroy(Arena *arena);
 
   // Reserves a slot for a new counter. If this fails, then the resulting
   // Counter will evaluate to false.
   Counter getCounter();
 
-  void increment(int cpu, int slabSlot, bool weak);
-  bool tryIncrement(int cpu, int slabSlot);
+  void increment(int cpu);
 
-  bool decrement(int originalCpu, int slabSlot, bool weak);
+  bool decrement(int originalCpu);
 
- private:
-  std::atomic<uint64_t> availableSlotsMask_;
-
-  struct AtomicWrapper {
-    AtomicWrapper() : value(0) {}
-    AtomicWrapper(const AtomicWrapper &) : value(0) {}
-
-    std::atomic<uint64_t> value;
-  };
-
-  std::vector<AtomicWrapper> usedCpusPerSlab_;
-  std::vector<AtomicWrapper> usedCpusPerWeakSlab_;
-
-  // One Slab and one weak Slab per Cpu.
-  std::vector<Slab> slabs_;
-  std::vector<Slab> weakSlabs_;
-
-  void markCpu(int cpu, int slabSlot); uint64_t unmarkCpu(int cpu, int slabSlot);
-  uint64_t unmarkSlabSlot(int slabSlot);
-};
-
-class ArenaManager {
-public:
-  static ArenaManager& getInstance();
-
-  ArenaManager(ArenaManager const &) = delete;
-  void operator=(ArenaManager const &) = delete;
-  ~ArenaManager();
-
-  Counter getCounter();
-  void notifyNewAvailability(Arena* arena);
+  size_t use_count() const;
 
 private:
-  ArenaManager() = default;
-  std::atomic<Arena *> currentArena_;
-  std::mutex mutex_;            // Protects changing the arenas_ list.
-  std::vector<Arena *> arenas_; // This is not all arenas, but just ones that
-                                // have available capacity.
+  // This cannot be constructed because slabs_ will be a properly sized array,
+  // which avoid an extra pointer lookup in std::vector.
+  Arena() = delete;
+
+  struct alignas(128) {
+    std::atomic<uint64_t> usedCpus;
+    size_t sizeofArena;
+    int numCpus;
+  } info_;
+
+  // This will end up having a Slab for each CPU. malloc is used instead of a
+  // constructor to make this abomination happen.
+  Slab slabs_[1];
+
+  void markCpu(int cpu);
+  uint64_t unmarkCpu(int cpu);
+  uint64_t unmarkSlabSlot();
 };
 
 template <typename T>
@@ -250,8 +229,7 @@ class HyperSharedPointer {
  public:
   HyperSharedPointer() : counter_(), ptr_(nullptr) {}
 
-  HyperSharedPointer(T *ptr)
-      : counter_(ArenaManager::getInstance().getCounter()), ptr_(ptr) {}
+  HyperSharedPointer(T *ptr) : counter_(Arena::create(), getCpu()), ptr_(ptr) {}
 
   HyperSharedPointer(const HyperSharedPointer &other)
       : counter_(other.counter_), ptr_(other.ptr_) {}
@@ -268,17 +246,25 @@ class HyperSharedPointer {
   }
 
   HyperSharedPointer<T> &operator=(const HyperSharedPointer<T> &other) {
-    HyperSharedPointer p{other};
-    swap(p);
+    if (*this == other) {
+      return *this;
+    }
+
+    if (counter_.destroy()) {
+      delete ptr_;
+    }
+
+    ptr_ = other.ptr_;
+    counter_ = other.counter_;
     return *this;
   }
 
   void reset(T *ptr = nullptr) {
-    if (ptr) {
-      HyperSharedPointer p{ptr};
+    if (!ptr) {
+      HyperSharedPointer p;
       swap(p);
     } else {
-      HyperSharedPointer p;
+      HyperSharedPointer p{ptr};
       swap(p);
     }
   }
@@ -318,6 +304,8 @@ class HyperSharedPointer {
   T *operator->() const { return ptr_; }
 
   explicit operator bool() const { return ptr_ != nullptr; }
+
+  size_t use_count() const { return counter_.use_count(); }
 
 private:
   Counter counter_;
