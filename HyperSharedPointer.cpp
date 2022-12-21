@@ -14,6 +14,19 @@ int Debug::curFuncIndent_ = 0;
 int Debug::curCtorIndent_ = 40;
 bool Debug::enabled_ = true;
 
+class RseqRegistrar {
+public:
+  RseqRegistrar() {
+    CHECK(rseq_available(RSEQ_AVAILABLE_QUERY_KERNEL));
+    CHECK(!rseq_register_current_thread());
+  }
+
+  ~RseqRegistrar() {
+    CHECK(!rseq_unregister_current_thread());
+  }
+};
+thread_local RseqRegistrar rseqRegistrar{};
+
 int getCpu() {
   thread_local int remainingUses = 0;
   thread_local unsigned int cpu = -1;
