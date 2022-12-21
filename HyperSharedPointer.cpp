@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include <glog/logging.h>
+#include <rseq/rseq.h>
 
 namespace hsp {
 
@@ -23,7 +24,7 @@ int getCpu() {
   }
 
   remainingUses = 31;
-  CHECK(-1 != getcpu(&cpu, nullptr));
+  cpu = rseq_current_cpu();
   return cpu;
 }
 

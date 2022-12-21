@@ -3,12 +3,13 @@
 #include <glog/logging.h>
 #include "gtest/gtest.h"
 
-TEST(HyperSharedPointerTest, counterBasic) {
-  auto counter1 = hsp::ArenaManager::getInstance().getCounter();
-  auto counter2{counter1};
+#include <rseq/rseq.h>
 
-  EXPECT_FALSE(counter1.destroy());
-  EXPECT_TRUE(counter2.destroy());
+
+TEST(HyperSharedPointerTest, rseq) {
+  ASSERT_TRUE(rseq_available(RSEQ_AVAILABLE_QUERY_KERNEL));
+  ASSERT_FALSE(rseq_register_current_thread());
+  ASSERT_EQ(sched_getcpu(), rseq_current_cpu());
 }
 
 TEST(HyperSharedPointerTest, defaultCtor) { hsp::HyperSharedPointer<int> p; }

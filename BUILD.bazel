@@ -2,6 +2,16 @@ package(default_visibility = ["//visibility:public"])
 
 load("@rules_cc//cc:defs.bzl", "cc_library")
 load("@rules_cc//cc:defs.bzl", "cc_binary")
+load("@rules_foreign_cc//foreign_cc:defs.bzl", "configure_make", "cmake")
+
+configure_make(
+    name = "librseq",
+    configure_in_place = True,
+    lib_source = "@librseq_repo//:all_srcs",
+    autogen = True,
+    autogen_command="./bootstrap",
+    out_static_libs = ["librseq.a"],
+)
 
 cc_library(
   name = "hyper_shared_pointer",
@@ -9,6 +19,7 @@ cc_library(
   hdrs = ["HyperSharedPointer.h"],
   deps = [
     "@com_google_glog//:glog",
+    ":librseq",
   ],
   copts = ["-std=c++20"],
 )
@@ -21,6 +32,7 @@ cc_test(
     "@gtest//:gtest",
     "@gtest//:gtest_main",
     "@com_google_glog//:glog",
+    ":librseq",
   ],
   copts = ["-std=c++20"],
 )
