@@ -42,14 +42,45 @@ int getCpu() {
 }
 
 bool Slab::increment() {
-  if (!counter_.fetch_add(1, std::memory_order_relaxed)) {
-    return true;
+  // This can't be memory_order_relaxed because the initialization (when the
+  // counter is set to a non-negative value) needs to be communicated with
+  // other CPUs.
+  int count = counter_.fetch_add(1, std::memory_order_acquire);
+  // The value count == 0 is a special case. A second thread could have
+  // decremented this counter to 0, after which it will attempt to set the
+  // counter to std::numeric_limits<int>::min(). However, since the code here
+  // in Slab::increment() finished first, that process will fail and the Slab
+  // will remain registered.
+  if (count < 0) [[unlikely]] {
+    return false;
   }
-  return false;
+
+  return true;
+}
+
+void Slab::incrementCpuMarked() {
+  int count = std::numeric_limits<int>::min() + 1;
+  int wantCount;
+  do {
+    wantCount = std::max(count + 1, 1);
+  } while (!counter_.compare_exchange_weak(
+      count, wantCount, std::memory_order_acq_rel, std::memory_order_relaxed));
 }
 
 bool Slab::decrement() {
-  return 1 == counter_.fetch_sub(1, std::memory_order_acq_rel);
+  int count = counter_.fetch_sub(1, std::memory_order_acq_rel);
+
+  if (count == 1) [[unlikely]] {
+    count = 0;
+    int disabledCount = std::numeric_limits<int>::min();
+    if (counter_.compare_exchange_strong(count, disabledCount,
+                                         std::memory_order_acq_rel,
+                                         std::memory_order_relaxed)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 size_t Slab::use_count() const {
@@ -92,12 +123,12 @@ bool Counter::destroy() {
   if (!(*this)) {
     return false;
   }
-  bool ret = decrement();
-  if (ret) {
+  bool alive = decrement();
+  if (!alive) {
     Arena::destroy(arena());
   }
   reference_ = 0;
-  return ret;
+  return !alive;
 }
 
 Counter::operator bool() const { return reference_ != 0; }
@@ -144,20 +175,39 @@ void Arena::destroy(Arena *arena) { free(arena); }
 Counter Arena::getCounter() { return Counter(this, getCpu()); }
 
 void Arena::increment(int cpu) {
-  if (slabs_[cpu].increment()) {
-    markCpu(cpu);
+  while (true) {
+    if (slabs_[cpu].increment()) [[likely]] {
+      break;
+    }
+
+    if (markCpu(cpu)) [[likely]] {
+      slabs_[cpu].incrementCpuMarked();
+      break;
+    }
+
+    // We failed to mark the CPU because of one of two race conditions:
+    //
+    // 1) This thread was interrupted and a second thread attempted to
+    // increment the slab counter (which also failed) and then marked the
+    // CPU. If we keep trying, eventually that thread will initialize the
+    // slab counter in incrementCpuMarked and our attempt to increment will
+    // succeed.
+    //
+    // 2) A second thread has disabled the counter by setting it to
+    // std::numeric_limits<int>::min(), but it has not yet unmarked the CPU.
+    // We need to wait for that thread to eventually unmark the CPU so that
+    // we don't leave the CPU unmarked while we are using the slab counter.
+
+    std::this_thread::yield();
   }
 }
 
 bool Arena::decrement(int originalCpu) {
-  if (slabs_[originalCpu].decrement()) {
-    uint64_t usedCpus = unmarkCpu(originalCpu);
-    if (!usedCpus) {
-      return true;
-    }
+  if (!slabs_[originalCpu].decrement()) {
+    return unmarkCpu(originalCpu) != 0UL;
   }
 
-  return false;
+  return true;
 }
 
 size_t Arena::use_count() const {
@@ -170,24 +220,32 @@ size_t Arena::use_count() const {
   return count;
 }
 
-void Arena::markCpu(int cpu) {
+bool Arena::markCpu(int cpu) {
   uint64_t expected = info_.usedCpus.load(std::memory_order_relaxed);
   uint64_t usedCpus;
   do {
+    if (expected & (1UL << cpu)) {
+      return false;
+    }
     usedCpus = expected | (1UL << cpu);
   } while (!info_.usedCpus.compare_exchange_weak(expected, usedCpus,
                                                  std::memory_order_acq_rel,
                                                  std::memory_order_relaxed));
+  return true;
 }
 
 uint64_t Arena::unmarkCpu(int cpu) {
-  uint64_t expected = info_.usedCpus.load(std::memory_order_relaxed);
-  uint64_t usedCpus;
+  uint64_t usedCpus = info_.usedCpus.load(std::memory_order_relaxed);
+  uint64_t expected = usedCpus;
   do {
+    if (!(expected & (1UL << cpu))) {
+      return usedCpus;
+    }
     usedCpus = expected & (~(1UL << cpu));
   } while (!info_.usedCpus.compare_exchange_weak(expected, usedCpus,
                                                  std::memory_order_acq_rel,
                                                  std::memory_order_relaxed));
+
   return usedCpus;
 }
 

@@ -99,16 +99,23 @@ int getCpu();
 // std::hardware_destructive_interferrence_size.
 class alignas(128) Slab {
 public:
-  // Returns true iff this is the first increment.
+  // Returns true if the increment was successful.
+  // The parameter cpuConfirmed indicates whether the caller has verified that
+  // the CPU has been marked. If the CPU has not been confirmed then this method
+  // will refuse to increment from 0->1.
   bool increment();
 
-  // Returns true iff this is the last decrement.
+  void incrementCpuMarked();
+
+  // Returns true iff this is can be further decremented.
   bool decrement();
 
   size_t use_count() const;
 
 private:
-  std::atomic<int> counter_{0};
+  // If the result of a fetch_add is negative, this indicates that this slab
+  // has not been registered with the Arena.
+  std::atomic<int> counter_{std::numeric_limits<int>::min()};
 };
 
 class Arena;
@@ -152,8 +159,8 @@ private:
 
   void increment();
 
-  // Returns true if the Counter cannot be decremented further. A false Counter
-  // will always return false.
+  // Returns true iff the Counter can be decremented further. A false Counter
+  // will always return true.
   bool decrement();
 };
 
@@ -219,8 +226,9 @@ private:
   // constructor to make this abomination happen.
   Slab slabs_[1];
 
-  void markCpu(int cpu);
+  bool markCpu(int cpu);
   uint64_t unmarkCpu(int cpu);
+
   uint64_t unmarkSlabSlot();
 };
 
