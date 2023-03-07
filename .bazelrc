@@ -1,4 +1,12 @@
 build --repo_env=CC=clang
+build --cxxopt=-std=c++20
+build --cxxopt=-Wall
+build --cxxopt=-Wextra
+#build --cxxopt=-Werror
+build --cxxopt='-Wno-unused-parameter'
+build --cxxopt='-Wno-missing-field-initializers'
+build --cxxopt='-Wno-cast-function-type'
+build --cxxopt='-Wno-type-limits'
 
 build:asan --strip=never
 build:asan --copt -fsanitize=address
@@ -32,13 +40,4 @@ build:msan --copt -O0
 build:msan --copt -fno-omit-frame-pointer
 build:msan --linkopt -fsanitize=memory
 build:msan --cc_output_directory_tag=msan
-
-build --cxxopt=-std=c++20
-build --cxxopt=-Wall
-build --cxxopt=-Wextra
-#build --cxxopt=-Werror
-build --cxxopt='-Wno-unused-parameter'
-build --cxxopt='-Wno-missing-field-initializers'
-build --cxxopt='-Wno-cast-function-type'
-build --cxxopt='-Wno-type-limits'
 

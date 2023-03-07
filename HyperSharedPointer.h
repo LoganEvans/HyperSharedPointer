@@ -10,8 +10,16 @@
 
 namespace hsp {
 
+#ifdef __cpp_lib_hardware_interference_size
+using std::hardware_constructive_interference_size;
+using std::hardware_destructive_interference_size;
+#else
+constexpr std::size_t hardware_constructive_interference_size = 64;
+constexpr std::size_t hardware_destructive_interference_size = 64;
+#endif
+
 class Debug {
- public:
+public:
   static int curFuncIndent_;
   static int curCtorIndent_;
   static bool enabled_;
@@ -20,7 +28,7 @@ class Debug {
 
   static void disable() { enabled_ = false; }
 
-  Debug(const char* fmt, ...) {
+  Debug(const char *fmt, ...) {
     char buf[1000];
     va_list args;
     va_start(args, fmt);
@@ -38,7 +46,7 @@ class Debug {
       for (int i = 0; i < myIndent_; i++) {
         fprintf(stderr, " ");
       }
-    fprintf(stderr, "> %s\n", msg_.c_str());
+      fprintf(stderr, "> %s\n", msg_.c_str());
     }
   }
 
@@ -47,7 +55,7 @@ class Debug {
       for (int i = 0; i < myIndent_; i++) {
         fprintf(stderr, " ");
       }
-    fprintf(stderr, "< %s%s\n", msg_.c_str(), note_.c_str());
+      fprintf(stderr, "< %s%s\n", msg_.c_str(), note_.c_str());
     }
 
     if (isFuncMsg()) {
@@ -57,7 +65,7 @@ class Debug {
     }
   }
 
-  void note(const char* fmt, ...) {
+  void note(const char *fmt, ...) {
     char buf[1000];
     va_list args;
     va_start(args, fmt);
@@ -68,7 +76,7 @@ class Debug {
     note_ = std::string{" // "} + buf;
   }
 
-  void print(const char* fmt, ...) {
+  void print(const char *fmt, ...) {
     char buf[1000];
     va_list args;
     va_start(args, fmt);
@@ -85,7 +93,7 @@ class Debug {
     }
   }
 
- private:
+private:
   int myIndent_;
   std::string msg_;
   std::string note_;
@@ -95,9 +103,7 @@ class Debug {
 
 int getCpu();
 
-// TODO(lpe): Instead of 128, this should use
-// std::hardware_destructive_interferrence_size.
-class alignas(128) Slab {
+class alignas(hardware_destructive_interference_size) Slab {
 public:
   // Returns true if the increment was successful.
   // The parameter cpuConfirmed indicates whether the caller has verified that
@@ -126,13 +132,13 @@ public:
 
   Counter(Arena *arena, int originalCpu);
 
-  Counter(const Counter& other);
+  Counter(const Counter &other);
 
-  Counter(Counter&& other);
+  Counter(Counter &&other);
 
-  Counter& operator=(const Counter& other);
+  Counter &operator=(const Counter &other);
 
-  Counter& operator=(Counter&& other);
+  Counter &operator=(Counter &&other);
 
   ~Counter();
 
@@ -145,7 +151,7 @@ public:
   size_t use_count() const;
 
 private:
-  static constexpr uint64_t kFieldBits = 7;  // From alignas(128) for Arena.
+  static constexpr uint64_t kFieldBits = 7; // From alignas(128) for Arena.
   static constexpr uint64_t kFieldMask = (1UL << kFieldBits) - 1;
   // This comes from using alignas(4096) for Arena.
   static constexpr uint64_t kArenaMask = ~kFieldMask;
@@ -153,7 +159,7 @@ private:
 
   uintptr_t reference_{0};
 
-  Arena* arena() const;
+  Arena *arena() const;
 
   int originalCpu() const;
 
@@ -170,13 +176,13 @@ public:
 
   WeakCounter(Arena *arena, int originalCpu);
 
-  WeakCounter(const WeakCounter& other);
+  WeakCounter(const WeakCounter &other);
 
-  WeakCounter(WeakCounter&& other);
+  WeakCounter(WeakCounter &&other);
 
-  WeakCounter& operator=(const Counter& other);
+  WeakCounter &operator=(const Counter &other);
 
-  WeakCounter& operator=(WeakCounter&& other);
+  WeakCounter &operator=(WeakCounter &&other);
 
   ~WeakCounter() = default;
 
@@ -190,7 +196,7 @@ private:
   // Returns true if the WeakCounter cannot be decremented further.
   bool decrement();
 
-  Arena* arena() const;
+  Arena *arena() const;
 
   int originalCpu() const;
 };
@@ -198,12 +204,8 @@ private:
 // Contains space for up to 64 counters.
 class alignas(128) Arena {
 public:
-  static Arena* create();
+  static Arena *create();
   static void destroy(Arena *arena);
-
-  // Reserves a slot for a new counter. If this fails, then the resulting
-  // Counter will evaluate to false.
-  Counter getCounter();
 
   void increment(int cpu);
 
@@ -232,9 +234,8 @@ private:
   uint64_t unmarkSlabSlot();
 };
 
-template <typename T>
-class HyperSharedPointer {
- public:
+template <typename T> class HyperSharedPointer {
+public:
   HyperSharedPointer() : counter_(), ptr_(nullptr) {}
 
   HyperSharedPointer(T *ptr) : counter_(Arena::create(), getCpu()), ptr_(ptr) {}
@@ -317,7 +318,7 @@ class HyperSharedPointer {
 
 private:
   Counter counter_;
-  T* ptr_;
+  T *ptr_;
 };
 
 template <class T, class U>

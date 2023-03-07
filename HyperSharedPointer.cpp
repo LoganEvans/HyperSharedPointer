@@ -21,9 +21,7 @@ public:
     CHECK(!rseq_register_current_thread());
   }
 
-  ~RseqRegistrar() {
-    CHECK(!rseq_unregister_current_thread());
-  }
+  ~RseqRegistrar() { CHECK(!rseq_unregister_current_thread()); }
 };
 thread_local RseqRegistrar rseqRegistrar{};
 
@@ -171,8 +169,6 @@ Arena *Arena::create() {
 }
 
 void Arena::destroy(Arena *arena) { free(arena); }
-
-Counter Arena::getCounter() { return Counter(this, getCpu()); }
 
 void Arena::increment(int cpu) {
   while (true) {

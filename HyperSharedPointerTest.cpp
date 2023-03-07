@@ -1,10 +1,9 @@
 #include "HyperSharedPointer.h"
 
-#include <glog/logging.h>
 #include "gtest/gtest.h"
+#include <glog/logging.h>
 
 #include <rseq/rseq.h>
-
 
 TEST(HyperSharedPointerTest, rseq) {
   ASSERT_TRUE(rseq_available(RSEQ_AVAILABLE_QUERY_KERNEL));
