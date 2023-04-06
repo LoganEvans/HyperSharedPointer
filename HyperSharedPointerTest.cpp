@@ -52,10 +52,8 @@ TEST(HyperSharedPointerTest, resetValue) {
 }
 
 TEST(HyperSharedPointerTest, swap) {
-  hsp::HyperSharedPointer<int> p1{new int};
-  *p1 = 1;
-  hsp::HyperSharedPointer<int> p2{new int};
-  *p2 = 2;
+  hsp::HyperSharedPointer<int> p1{new int{1}};
+  hsp::HyperSharedPointer<int> p2{new int{2}};
 
   EXPECT_EQ(*p1, 1);
   EXPECT_EQ(*p2, 2);
@@ -63,4 +61,24 @@ TEST(HyperSharedPointerTest, swap) {
   p1.swap(p2);
   EXPECT_EQ(*p1, 2);
   EXPECT_EQ(*p2, 1);
+}
+
+TEST(HyperSharedPointerTest, KeepAlive) {
+  hsp::HyperSharedPointer<int> p1;
+  hsp::HyperSharedPointer<int> p2;
+
+  {
+    hsp::KeepAlive<int> ka{new int{4}};
+
+    EXPECT_EQ(*ka.get(), 4);
+    EXPECT_EQ(*ka.get(), 4);
+    p1 = ka.get();
+
+    EXPECT_EQ(*ka.reset(new int{5}), 5);
+    EXPECT_EQ(*ka.get(), 5);
+    p2 = ka.get();
+  }
+
+  EXPECT_EQ(*p1, 4);
+  EXPECT_EQ(*p2, 5);
 }

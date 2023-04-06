@@ -44,6 +44,9 @@ class alignas(hardware_destructive_interference_size) Slab {
 class Arena;
 
 class Counter {
+  template <typename T>
+  friend class KeepAlive;
+
  public:
   Counter() = default;
 
@@ -120,6 +123,9 @@ class WeakCounter {
 
 // Contains space for up to 64 counters.
 class alignas(128) Arena {
+  template <typename T>
+  friend class KeepAlive;
+
  public:
   static Arena *create();
   static void destroy(Arena *arena);
@@ -152,7 +158,13 @@ class alignas(128) Arena {
 };
 
 template <typename T>
+class KeepAlive;
+
+template <typename T>
 class HyperSharedPointer {
+  template <typename U>
+  friend class KeepAlive;
+
  public:
   HyperSharedPointer() : counter_(), ptr_(nullptr) {}
 
@@ -244,5 +256,43 @@ bool operator==(const HyperSharedPointer<T> &lhs,
                 const HyperSharedPointer<U> &rhs) {
   return lhs.get() == rhs.get();
 }
+
+template <typename T>
+class KeepAlive {
+ public:
+  KeepAlive(T *ptr) {
+    std::lock_guard lock{mutex_};
+    reset(ptr, lock);
+  }
+
+  HyperSharedPointer<T> reset(T *ptr) {
+    std::lock_guard lock{mutex_};
+    reset(ptr, lock);
+    return ptr_;
+  }
+
+  HyperSharedPointer<T> get() const { return ptr_; }
+
+ private:
+  std::mutex mutex_;
+  HyperSharedPointer<T> ptr_;
+
+  void reset(T *ptr, const std::lock_guard<std::mutex> &) {
+    int numCpus = std::thread::hardware_concurrency();
+
+    if (ptr_) {
+      for (int i = 0; i < numCpus; i++) {
+        ptr_.counter_.arena()->slabs_[i].decrement();
+      }
+    }
+
+    ptr_ = HyperSharedPointer(ptr);
+    ptr_.counter_.arena()->info_.usedCpus.store((1ULL << numCpus) - 1,
+                                                 std::memory_order_release);
+    for (int i = 0; i < numCpus; i++) {
+      ptr_.counter_.arena()->slabs_[i].incrementCpuMarked();
+    }
+  }
+};
 
 }  // namespace hsp
