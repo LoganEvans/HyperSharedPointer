@@ -21,7 +21,7 @@ constexpr std::size_t hardware_destructive_interference_size = 64;
 int getCpu();
 
 class alignas(hardware_destructive_interference_size) Slab {
-public:
+ public:
   // Returns true if the increment was successful.
   // The parameter cpuConfirmed indicates whether the caller has verified that
   // the CPU has been marked. If the CPU has not been confirmed then this method
@@ -35,7 +35,7 @@ public:
 
   size_t use_count() const;
 
-private:
+ private:
   // If the result of a fetch_add is negative, this indicates that this slab
   // has not been registered with the Arena.
   std::atomic<int> counter_{std::numeric_limits<int>::min()};
@@ -44,7 +44,7 @@ private:
 class Arena;
 
 class Counter {
-public:
+ public:
   Counter() = default;
 
   Counter(Arena *arena, int originalCpu);
@@ -67,8 +67,8 @@ public:
 
   size_t use_count() const;
 
-private:
-  static constexpr uint64_t kFieldBits = 7; // From alignas(128) for Arena.
+ private:
+  static constexpr uint64_t kFieldBits = 7;  // From alignas(128) for Arena.
   static constexpr uint64_t kFieldMask = (1UL << kFieldBits) - 1;
   // This comes from using alignas(4096) for Arena.
   static constexpr uint64_t kArenaMask = ~kFieldMask;
@@ -88,7 +88,7 @@ private:
 };
 
 class WeakCounter {
-public:
+ public:
   WeakCounter() = delete;
 
   WeakCounter(Arena *arena, int originalCpu);
@@ -105,7 +105,7 @@ public:
 
   Counter lock() const;
 
-private:
+ private:
   uintptr_t reference_;
 
   void increment();
@@ -120,7 +120,7 @@ private:
 
 // Contains space for up to 64 counters.
 class alignas(128) Arena {
-public:
+ public:
   static Arena *create();
   static void destroy(Arena *arena);
 
@@ -130,7 +130,7 @@ public:
 
   size_t use_count() const;
 
-private:
+ private:
   // This cannot be constructed because slabs_ will be a properly sized array,
   // which avoid an extra pointer lookup in std::vector.
   Arena() = delete;
@@ -151,8 +151,9 @@ private:
   uint64_t unmarkSlabSlot();
 };
 
-template <typename T> class HyperSharedPointer {
-public:
+template <typename T>
+class HyperSharedPointer {
+ public:
   HyperSharedPointer() : counter_(), ptr_(nullptr) {}
 
   HyperSharedPointer(T *ptr) : counter_(Arena::create(), getCpu()), ptr_(ptr) {}
@@ -233,7 +234,7 @@ public:
 
   size_t use_count() const { return counter_.use_count(); }
 
-private:
+ private:
   Counter counter_;
   T *ptr_;
 };
@@ -244,4 +245,4 @@ bool operator==(const HyperSharedPointer<T> &lhs,
   return lhs.get() == rhs.get();
 }
 
-} // namespace hsp
+}  // namespace hsp

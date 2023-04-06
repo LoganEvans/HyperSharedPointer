@@ -1,10 +1,9 @@
-#include "HyperSharedPointer.h"
-
-#include "benchmark/benchmark.h"
-
 #include <memory>
 #include <random>
 #include <thread>
+
+#include "HyperSharedPointer.h"
+#include "benchmark/benchmark.h"
 
 static void BM_CreateStdSharedPtr(benchmark::State &state) {
   for (auto _ : state) {

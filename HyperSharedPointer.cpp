@@ -1,21 +1,16 @@
 #include "HyperSharedPointer.h"
 
+#include <glog/logging.h>
+#include <rseq/rseq.h>
 #include <sched.h>
 
 #include <cstddef>
 #include <cstring>
 
-#include <glog/logging.h>
-#include <rseq/rseq.h>
-
 namespace hsp {
 
-int Debug::curFuncIndent_ = 0;
-int Debug::curCtorIndent_ = 40;
-bool Debug::enabled_ = true;
-
 class RseqRegistrar {
-public:
+ public:
   RseqRegistrar() {
     CHECK(rseq_available(RSEQ_AVAILABLE_QUERY_KERNEL));
     CHECK(!rseq_register_current_thread());
@@ -245,4 +240,4 @@ uint64_t Arena::unmarkCpu(int cpu) {
   return usedCpus;
 }
 
-} // namespace hsp
+}  // namespace hsp
