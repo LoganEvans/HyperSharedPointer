@@ -82,3 +82,9 @@ TEST(HyperSharedPointerTest, KeepAlive) {
   EXPECT_EQ(*p1, 4);
   EXPECT_EQ(*p2, 5);
 }
+
+TEST(HyperSharedPointerTest, originalCpu) {
+  hsp::HyperSharedPointer<int> p;
+
+  EXPECT_GE(p.originalCpu(), 0);
+}

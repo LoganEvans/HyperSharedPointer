@@ -70,6 +70,8 @@ class Counter {
 
   size_t use_count() const;
 
+  int originalCpu() const;
+
  private:
   static constexpr uint64_t kFieldBits = 7;  // From alignas(128) for Arena.
   static constexpr uint64_t kFieldMask = (1UL << kFieldBits) - 1;
@@ -80,8 +82,6 @@ class Counter {
   uintptr_t reference_{0};
 
   Arena *arena() const;
-
-  int originalCpu() const;
 
   void increment();
 
@@ -245,6 +245,8 @@ class HyperSharedPointer {
   explicit operator bool() const { return ptr_ != nullptr; }
 
   size_t use_count() const { return counter_.use_count(); }
+
+  int originalCpu() const { return counter_.originalCpu(); }
 
  private:
   Counter counter_;
