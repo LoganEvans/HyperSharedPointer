@@ -267,6 +267,8 @@ class KeepAlive {
     reset(ptr, lock);
   }
 
+  ~KeepAlive() { reset(nullptr); }
+
   HyperSharedPointer<T> reset(T *ptr) {
     std::lock_guard lock{mutex_};
     reset(ptr, lock);
@@ -284,15 +286,23 @@ class KeepAlive {
 
     if (ptr_) {
       for (int i = 0; i < numCpus; i++) {
-        ptr_.counter_.arena()->slabs_[i].decrement();
+        if (!ptr_.counter_.arena()->slabs_[i].decrement()) {
+          ptr_.counter_.arena()->unmarkCpu(i);
+        }
       }
     }
 
-    ptr_ = HyperSharedPointer(ptr);
-    ptr_.counter_.arena()->info_.usedCpus.store((1ULL << numCpus) - 1,
-                                                 std::memory_order_release);
-    for (int i = 0; i < numCpus; i++) {
-      ptr_.counter_.arena()->slabs_[i].incrementCpuMarked();
+    if (ptr) {
+      ptr_ = HyperSharedPointer(ptr);
+      for (int i = 0; i < numCpus; i++) {
+        if (ptr_.counter_.arena()->markCpu(i)) {
+          ptr_.counter_.arena()->slabs_[i].incrementCpuMarked();
+        } else {
+          ptr_.counter_.arena()->slabs_[i].increment();
+        }
+      }
+    } else {
+      ptr_ = nullptr;
     }
   }
 };
