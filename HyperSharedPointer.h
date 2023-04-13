@@ -282,7 +282,7 @@ class KeepAlive {
   }
 
  private:
-  std::shared_mutex mutex_;
+  mutable std::shared_mutex mutex_;
   HyperSharedPointer<T> ptr_;
 
   void reset(T *ptr, const std::unique_lock<std::shared_mutex> &) {
