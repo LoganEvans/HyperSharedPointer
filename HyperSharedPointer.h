@@ -6,6 +6,7 @@
 #include <list>
 #include <mutex>
 #include <new>
+#include <shared_mutex>
 #include <thread>
 
 namespace hsp {
@@ -263,25 +264,28 @@ template <typename T>
 class KeepAlive {
  public:
   KeepAlive(T *ptr) {
-    std::lock_guard lock{mutex_};
+    std::unique_lock lock{mutex_};
     reset(ptr, lock);
   }
 
   ~KeepAlive() { reset(nullptr); }
 
   HyperSharedPointer<T> reset(T *ptr) {
-    std::lock_guard lock{mutex_};
+    std::unique_lock lock{mutex_};
     reset(ptr, lock);
     return ptr_;
   }
 
-  HyperSharedPointer<T> get() const { return ptr_; }
+  HyperSharedPointer<T> get() const {
+    std::shared_lock lock{mutex_};
+    return ptr_;
+  }
 
  private:
-  std::mutex mutex_;
+  std::shared_mutex mutex_;
   HyperSharedPointer<T> ptr_;
 
-  void reset(T *ptr, const std::lock_guard<std::mutex> &) {
+  void reset(T *ptr, const std::unique_lock<std::shared_mutex> &) {
     int numCpus = std::thread::hardware_concurrency();
 
     if (ptr_) {
